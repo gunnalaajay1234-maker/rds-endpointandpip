@@ -1,0 +1,64 @@
+name: Full AWS Deploy
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build App
+        working-directory: app
+        run: mvn clean package -DskipTests
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+
+      - name: Get Outputs
+        id: tf
+        working-directory: terraform
+        run: |
+          echo "EC2_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
+          echo "RDS_ENDPOINT=$(terraform output -raw rds_endpoint)" >> $GITHUB_ENV
+
+      - name: Setup SSH Key
+        run: |
+          echo "${{ secrets.EC2_KEY }}" | base64 -d > key.pem
+          chmod 400 key.pem
+
+      - name: Deploy App to EC2
+        run: |
+          scp -i key.pem -o StrictHostKeyChecking=no app/target/*.jar ec2-user@$EC2_IP:/home/ec2-user/app.jar
+
+          ssh -i key.pem -o StrictHostKeyChecking=no ec2-user@$EC2_IP << EOF
+            sudo yum install -y java-17
+            nohup java -jar app.jar \
+              --spring.datasource.url=jdbc:postgresql://$RDS_ENDPOINT:5432/employee_db \
+              --spring.datasource.username=${{ secrets.DB_USERNAME }} \
+              --spring.datasource.password=${{ secrets.DB_PASSWORD }} \
+              > app.log 2>&1 &
+          EOF
