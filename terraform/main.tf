@@ -12,7 +12,11 @@ resource "aws_subnet" "subnet1" {
   cidr_block = "10.0.1.0/24"
   availability_zone = "ap-south-1a"
 }
-
+resource "aws_subnet" "subnet2" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = "10.0.2.0/24"
+  availability_zone = "ap-south-1b"
+}
 resource "aws_internet_gateway" "igw" {
   vpc_id = aws_vpc.main.id
 }
@@ -68,7 +72,7 @@ resource "aws_security_group" "sg" {
 # ---------------- EC2 ----------------
 resource "aws_instance" "ec2" {
   ami           = "ami-0f5ee92e2d63afc18"
-  instance_type = "t2.micro"
+  instance_type = "t3.micro"
   subnet_id     = aws_subnet.subnet1.id
   vpc_security_group_ids = [aws_security_group.sg.id]
 
@@ -84,9 +88,12 @@ resource "aws_instance" "ec2" {
 # ---------------- RDS ----------------
 resource "aws_db_subnet_group" "db_subnet" {
   name = "db-subnet"
-  subnet_ids = [aws_subnet.subnet1.id]
-}
 
+  subnet_ids = [
+    aws_subnet.subnet1.id,
+    aws_subnet.subnet2.id
+  ]
+}
 resource "aws_db_instance" "rds" {
   allocated_storage = 20
   engine = "postgres"
