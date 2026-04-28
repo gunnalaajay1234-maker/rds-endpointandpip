@@ -1,2 +1,4 @@
-variable "db_username" {}
-variable "db_password" {}
+variable "db_password" {
+  description = "RDS password"
+  type        = string
+}
