@@ -71,20 +71,32 @@ resource "aws_security_group" "sg" {
 
 # ---------------- EC2 ----------------
 resource "aws_instance" "ec2" {
-  ami           = "ami-0f5ee92e2d63afc18"
-  instance_type = "t3.micro"
-  subnet_id     = aws_subnet.subnet1.id
+  ami           = "ami-03f4878755434977f"
+  instance_type = "t2.micro"
+
+  subnet_id = aws_subnet.subnet1.id
   vpc_security_group_ids = [aws_security_group.sg.id]
 
   associate_public_ip_address = true
 
   user_data = <<-EOF
               #!/bin/bash
-              sudo apt update -y
-              sudo apt install openjdk-17-jdk -y
-              EOF
-}
+              yum update -y
+              yum install -y java-17-amazon-corretto
 
+              cd /home/ec2-user
+
+              # Download your JAR from GitHub
+              wget https://github.com/gunnalaajay1234-maker/rds-endpointandpip/releases/download/v1/app.jar
+
+              # Run app
+              nohup java -jar app.jar > app.log 2>&1 &
+              EOF
+
+  tags = {
+    Name = "java-ec2"
+  }
+}
 # ---------------- RDS ----------------
 resource "aws_db_subnet_group" "db_subnet" {
   name = "db-subnet"
