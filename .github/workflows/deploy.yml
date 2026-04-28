@@ -1,64 +1,102 @@
-name: Full AWS Deploy
+name: Java CI/CD + AWS Deploy
 
 on:
   push:
     branches: [ "main" ]
 
 jobs:
-  deploy:
+  build-deploy:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Build App
-        working-directory: app
-        run: mvn clean package -DskipTests
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform Init
-        working-directory: terraform
-        run: terraform init
-
-      - name: Terraform Apply
-        working-directory: terraform
-        run: terraform apply -auto-approve
+    services:
+      postgres:
+        image: postgres:15
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          TF_VAR_db_username: ${{ secrets.DB_USERNAME }}
-          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          POSTGRES_DB: employeedb
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
 
-      - name: Get Outputs
-        id: tf
-        working-directory: terraform
-        run: |
-          echo "EC2_IP=$(terraform output -raw ec2_public_ip)" >> $GITHUB_ENV
-          echo "RDS_ENDPOINT=$(terraform output -raw rds_endpoint)" >> $GITHUB_ENV
+    steps:
+    # ✅ Checkout Code
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-      - name: Setup SSH Key
-        run: |
-          echo "${{ secrets.EC2_KEY }}" | base64 -d > key.pem
-          chmod 400 key.pem
+    # ✅ Debug (VERY IMPORTANT)
+    - name: Show Project Structure
+      run: ls -R
 
-      - name: Deploy App to EC2
-        run: |
-          scp -i key.pem -o StrictHostKeyChecking=no app/target/*.jar ec2-user@$EC2_IP:/home/ec2-user/app.jar
+    # ✅ Setup Java
+    - name: Setup JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
-          ssh -i key.pem -o StrictHostKeyChecking=no ec2-user@$EC2_IP << EOF
-            sudo yum install -y java-17
-            nohup java -jar app.jar \
-              --spring.datasource.url=jdbc:postgresql://$RDS_ENDPOINT:5432/employee_db \
-              --spring.datasource.username=${{ secrets.DB_USERNAME }} \
-              --spring.datasource.password=${{ secrets.DB_PASSWORD }} \
-              > app.log 2>&1 &
-          EOF
+    # ✅ Build (FIXED - no wrong directory)
+    - name: Build with Maven
+      run: mvn clean package -DskipTests
+
+    # ✅ Run Tests
+    - name: Run Tests
+      run: mvn test
+
+    # ✅ Configure AWS
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        region: ${{ secrets.AWS_REGION }}
+
+    # ✅ Get EC2 Public IP
+    - name: Get EC2 Public IP
+      id: ec2
+      run: |
+        IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=MyEC2" \
+          --query "Reservations[*].Instances[*].PublicIpAddress" \
+          --output text)
+        echo "EC2_PUBLIC_IP=$IP" >> $GITHUB_ENV
+        echo "EC2 Public IP: $IP"
+
+    # ✅ Get RDS Endpoint
+    - name: Get RDS Endpoint
+      id: rds
+      run: |
+        ENDPOINT=$(aws rds describe-db-instances \
+          --db-instance-identifier mydb \
+          --query "DBInstances[0].Endpoint.Address" \
+          --output text)
+        echo "RDS_ENDPOINT=$ENDPOINT" >> $GITHUB_ENV
+        echo "RDS Endpoint: $ENDPOINT"
+
+    # ✅ Copy JAR to EC2
+    - name: Copy JAR to EC2
+      run: |
+        echo "${{ secrets.EC2_KEY }}" > key.pem
+        chmod 400 key.pem
+
+        scp -o StrictHostKeyChecking=no -i key.pem target/*.jar ec2-user@$EC2_PUBLIC_IP:/home/ec2-user/app.jar
+
+    # ✅ Run App on EC2
+    - name: Deploy App on EC2
+      run: |
+        ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_PUBLIC_IP << 'EOF'
+          pkill -f 'java -jar' || true
+          nohup java -jar /home/ec2-user/app.jar > app.log 2>&1 &
+        EOF
+
+    # ✅ Print Final Output
+    - name: Show Access Info
+      run: |
+        echo "================================="
+        echo "APP URL: http://$EC2_PUBLIC_IP:8080"
+        echo "RDS ENDPOINT: $RDS_ENDPOINT"
+        echo "================================="
