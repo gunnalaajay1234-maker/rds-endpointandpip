@@ -13,34 +13,42 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      # ✅ DEBUG (VERY IMPORTANT - SEE FILES)
+      # 🔍 Debug structure
       - name: Show Project Structure
         run: ls -R
 
-      # ✅ VERIFY pom.xml exists
-      - name: Check pom.xml
-        run: ls app
-
-      # ✅ CORRECT BUILD (NO MORE ERROR)
+      # ✅ Build Java from correct folder
       - name: Build Java App
         run: |
           cd app
           mvn clean package -DskipTests
 
-      # ✅ TERRAFORM
+      # 🌍 Terraform Setup
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
 
+      # 🔐 AWS Auth
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # ⚙️ Terraform Init
       - name: Terraform Init
         run: |
           cd terraform
           terraform init
 
+      # 🚀 Terraform Apply (FIXED)
       - name: Terraform Apply
         run: |
           cd terraform
-          terraform apply -auto-approve
+          terraform apply -auto-approve \
+            -var="db_password=${{ secrets.DB_PASSWORD }}"
 
+      # 📤 Outputs
       - name: Show Outputs
         run: |
           cd terraform
